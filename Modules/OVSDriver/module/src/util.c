@@ -352,11 +352,11 @@ ind_ovs_interface_ioctl(long cmd, struct ifreq *req)
  * 'cmd' req will be read from or written to.
  */
 static indigo_error_t
-ind_ovs_ethtool_ioctl(const char *ifname, struct ethtool_cmd *ecmd)
+ind_ovs_ethtool_ioctl(const char *ifname, void *data)
 {
     struct ifreq req;
     strncpy(req.ifr_name, ifname, sizeof(req.ifr_name));
-    req.ifr_data = (void*)ecmd;
+    req.ifr_data = (void*)data;
     return ind_ovs_interface_ioctl(SIOCETHTOOL, &req);
 }
 
@@ -398,14 +398,29 @@ ind_ovs_get_interface_features(const char *ifname,
                                int version)
 {
     struct ethtool_cmd ecmd;
+    struct ethtool_drvinfo drvinfo;
+    indigo_error_t err;
 
     *curr = 0;
     *advertised = 0;
     *supported = 0;
     *peer = 0;
 
+    /* Set good values for known drivers that don't support ethtool */
+    drvinfo.cmd = ETHTOOL_GDRVINFO;
+    err = ind_ovs_ethtool_ioctl(ifname, &drvinfo);
+    if (err) {
+        LOG_ERROR("ethtool failed to identify interface driver for interface %s: %s", ifname, strerror(errno));
+        return;
+    }
+    if (strcmp(drvinfo.driver, "openvswitch") == 0) {
+        *curr |= OF_PORT_FEATURE_FLAG_10GB_FD;
+        *curr |= OF_PORT_FEATURE_FLAG_COPPER_BY_VERSION(version);
+        return;
+    }
+
     ecmd.cmd = ETHTOOL_GSET;
-    indigo_error_t err = ind_ovs_ethtool_ioctl(ifname, &ecmd);
+    err = ind_ovs_ethtool_ioctl(ifname, &ecmd);
     if (err == INDIGO_ERROR_NOT_FOUND) {
         /* Virtual ports (gre, etc) don't support ethtool */
         *curr |= OF_PORT_FEATURE_FLAG_10GB_FD;
